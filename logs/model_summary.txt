@@ -1,0 +1,15 @@
+Sign Language LSTM Model Summary
+==================================================
+Number of classes: 10
+Sequence length: 30
+Features per frame: 126
+
+Model Architecture:
+--------------------
+LSTM Layer 1: 126 -> 128
+Dropout: 0.3
+LSTM Layer 2: 128 -> 64
+Dropout: 0.3
+Dense Layer 1: 64 -> 64 (ReLU)
+Output Layer: 64 -> 10 (Softmax)
+==================================================
