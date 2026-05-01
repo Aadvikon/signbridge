@@ -8,8 +8,7 @@ export default defineConfig({
     port: 3001,
     host: true,
     historyApiFallback: true,
-    middleware: true,
-    hmr: { overlay: false }
+    middleware: true
   },
   optimizeDeps: {
     include: ['hls.js']

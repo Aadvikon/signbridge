@@ -19,6 +19,7 @@ from dotenv import load_dotenv
 from routes.auth import router as auth_router
 from routes.video import router as video_router
 from routes.subscription import router as subscription_router
+from routes.claude_routes import router as claude_router
 
 # Load environment variables
 load_dotenv()
@@ -72,6 +73,12 @@ app.include_router(
     subscription_router,
     prefix="/api/subscription",
     tags=["Subscription & Billing"]
+)
+
+app.include_router(
+    claude_router,
+    prefix="/api",
+    tags=["Claude"]
 )
 
 

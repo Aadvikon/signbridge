@@ -1,8 +1,9 @@
 """
 WLASL Dataset Downloader
-Downloads a sample of the World Large-scale Sign Language dataset.
-This script fetches metadata and downloads video samples for the top 10 signs.
-Can also create synthetic demo data for local testing.
+Downloads the COMPLETE World Large-scale Sign Language dataset.
+This script fetches metadata and downloads ALL videos for ALL signs.
+Target: 21,000+ videos across 2,000+ signs.
+Estimated size: 50-100GB
 """
 
 import os
@@ -12,6 +13,8 @@ import urllib.request
 from pathlib import Path
 from typing import List, Dict
 import logging
+from tqdm import tqdm
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -28,17 +31,11 @@ WLASL_VIDEO_BASE_URL = "https://github.com/dxli94/WLASL/raw/main/videos/"
 # Output directory
 DATA_RAW_PATH = Path(__file__).parent.parent.parent / "data" / "raw"
 
-# Demo data for testing (when WLASL unavailable)
-DEMO_SIGNS = [
-    "HELLO", "THANK_YOU", "GOOD_MORNING", "GOOD_NIGHT", "I_LOVE_YOU",
-    "HOW_ARE_YOU", "NICE_TO_MEET_YOU", "MY_NAME_IS", "HELP", "PLEASE"
-]
-
 
 def download_wlasl_metadata() -> Dict:
     """
     Download WLASL metadata from GitHub.
-    Tries multiple URLs. Falls back to demo data if all fail.
+    Tries multiple URLs. Exits if all fail (no demo fallback for full dataset).
     
     Returns:
         Dictionary containing the WLASL dataset metadata
@@ -56,65 +53,36 @@ def download_wlasl_metadata() -> Dict:
             logger.warning(f"  ✗ Failed: {type(e).__name__}")
             continue
     
-    # If all downloads fail, create demo metadata
-    logger.warning("\n⚠️  Could not download WLASL metadata from GitHub.")
-    logger.info("Creating demo dataset for local testing...\n")
-    return create_demo_metadata()
+    # If all downloads fail, exit with error
+    logger.error("\n❌ Could not download WLASL metadata from any source.")
+    logger.error("Please check your internet connection and try again.")
+    raise RuntimeError("Failed to download WLASL metadata")
 
 
-def create_demo_metadata() -> List[Dict]:
+def get_all_signs(metadata: Dict) -> List[Dict]:
     """
-    Create synthetic demo WLASL metadata for testing.
-    Simulates the WLASL dataset structure.
-    
-    Returns:
-        List of sign dictionaries with demo instances
-    """
-    demo_data = []
-    
-    for sign_id, gloss in enumerate(DEMO_SIGNS, 1):
-        # Create 2 fake video instances per sign for demo
-        instances = [
-            {"video_id": f"{sign_id:05d}_{idx:02d}"} 
-            for idx in range(2)
-        ]
-        
-        demo_data.append({
-            "sign_id": sign_id,
-            "gloss": gloss,
-            "instances": instances
-        })
-    
-    logger.info(f"Created demo metadata for {len(demo_data)} signs")
-    return demo_data
-
-
-def get_top_signs(metadata: Dict, num_signs: int = 10) -> List[Dict]:
-    """
-    Extract top N signs by number of videos available.
+    Get all signs from the WLASL metadata.
     
     Args:
         metadata: WLASL metadata dictionary
-        num_signs: Number of top signs to select
         
     Returns:
-        List of sign dictionaries sorted by video count (descending)
+        List of all sign dictionaries
     """
-    # Sort by number of videos per sign
-    sorted_signs = sorted(metadata, key=lambda x: len(x.get("instances", [])), reverse=True)
-    top_signs = sorted_signs[:num_signs]
+    all_signs = list(metadata)
     
-    logger.info(f"Selected top {num_signs} signs:")
-    for i, sign in enumerate(top_signs, 1):
-        video_count = len(sign.get("instances", []))
-        logger.info(f"  {i}. {sign['gloss']} - {video_count} videos")
+    logger.info(f"Found {len(all_signs)} signs in WLASL dataset")
     
-    return top_signs
+    # Count total videos
+    total_videos = sum(len(sign.get("instances", [])) for sign in all_signs)
+    logger.info(f"Total videos available: {total_videos}")
+    
+    return all_signs
 
 
 def download_video(url: str, output_path: Path) -> bool:
     """
-    Download a single video file.
+    Download a single video file with retry logic.
     
     Args:
         url: URL of the video to download
@@ -123,173 +91,171 @@ def download_video(url: str, output_path: Path) -> bool:
     Returns:
         True if download successful, False otherwise
     """
-    try:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        logger.info(f"Downloading {url} -> {output_path}")
-        urllib.request.urlretrieve(url, output_path)
-        
-        file_size = output_path.stat().st_size / (1024 * 1024)  # Convert to MB
-        logger.info(f"  ✓ Downloaded ({file_size:.2f} MB)")
-        return True
-        
-    except Exception as e:
-        logger.error(f"  ✗ Failed to download: {e}")
-        if output_path.exists():
-            output_path.unlink()  # Remove partial file
-        return False
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            
+            if attempt == 0:
+                logger.debug(f"Downloading {url} -> {output_path}")
+            else:
+                logger.debug(f"Retry {attempt}/{max_retries-1}: {url}")
+            
+            urllib.request.urlretrieve(url, output_path)
+            
+            file_size = output_path.stat().st_size / (1024 * 1024)  # Convert to MB
+            logger.debug(f"  ✓ Downloaded ({file_size:.2f} MB)")
+            return True
+            
+        except Exception as e:
+            logger.debug(f"  ✗ Attempt {attempt+1} failed: {e}")
+            if output_path.exists():
+                output_path.unlink()  # Remove partial file
+            if attempt < max_retries - 1:
+                time.sleep(1)  # Wait before retry
+            continue
+    
+    logger.warning(f"  ✗ Failed to download after {max_retries} attempts: {url}")
+    return False
 
 
-def download_sample_videos(top_signs: List[Dict], videos_per_sign: int = 2) -> None:
+def download_all_videos(all_signs: List[Dict]) -> None:
     """
-    Download sample videos for each of the top signs.
-    Falls back to creating demo video placeholders if download fails.
+    Download ALL videos for ALL signs in WLASL dataset.
+    Shows progress bar and handles failures gracefully.
     
     Args:
-        top_signs: List of sign dictionaries
-        videos_per_sign: Number of videos to download per sign
+        all_signs: List of all sign dictionaries
     """
-    total_videos = 0
+    # Count total videos to download
+    total_videos = sum(len(sign.get("instances", [])) for sign in all_signs)
+    logger.info(f"Starting download of {total_videos} videos across {len(all_signs)} signs")
+    logger.info("Estimated download size: 50-100GB")
+    logger.info("This may take several hours or days depending on your connection.\n")
+    
     successful_downloads = 0
     failed_downloads = 0
+    skipped_downloads = 0
     
-    for sign in top_signs:
-        gloss = sign["gloss"]
-        instances = sign.get("instances", [])[:videos_per_sign]
-        
-        logger.info(f"\nProcessing videos for '{gloss}' ({len(instances)} videos)...")
-        
-        for idx, instance in enumerate(instances, 1):
-            video_id = instance["video_id"]
-            video_url = f"{WLASL_VIDEO_BASE_URL}{video_id}.mp4"
+    # Progress bar
+    with tqdm(total=total_videos, desc="Downloading videos", unit="video") as pbar:
+        for sign in all_signs:
+            gloss = sign["gloss"]
+            instances = sign.get("instances", [])
             
-            # Create subdirectory for each sign
-            sign_dir = DATA_RAW_PATH / gloss.replace(" ", "_")
-            output_path = sign_dir / f"{video_id}.mp4"
-            
-            # Skip if already downloaded
-            if output_path.exists():
-                logger.info(f"  Skipping {video_id}.mp4 (already exists)")
+            if not instances:
                 continue
             
-            total_videos += 1
+            # Create subdirectory for each sign (sanitize name)
+            sign_dir_name = gloss.replace(" ", "_").replace("/", "_").replace("\\", "_")
+            sign_dir = DATA_RAW_PATH / sign_dir_name
             
-            # Try to download actual video
-            if download_video(video_url, output_path):
-                successful_downloads += 1
-            else:
-                failed_downloads += 1
-                # Create demo placeholder file
-                create_demo_video_placeholder(output_path)
+            for instance in instances:
+                video_id = instance["video_id"]
+                video_url = f"{WLASL_VIDEO_BASE_URL}{video_id}.mp4"
+                
+                # Output path
+                output_path = sign_dir / f"{video_id}.mp4"
+                
+                # Skip if already downloaded
+                if output_path.exists():
+                    skipped_downloads += 1
+                    pbar.update(1)
+                    continue
+                
+                # Try to download
+                if download_video(video_url, output_path):
+                    successful_downloads += 1
+                else:
+                    failed_downloads += 1
+                
+                pbar.update(1)
+                
+                # Update progress description occasionally
+                if (successful_downloads + failed_downloads + skipped_downloads) % 100 == 0:
+                    pbar.set_description(f"Downloaded {successful_downloads} | Failed {failed_downloads} | Skipped {skipped_downloads}")
     
-    logger.info(f"\n{'='*60}")
-    logger.info(f"Download Summary:")
+    logger.info(f"\n{'='*80}")
+    logger.info(f"Download Complete!")
     logger.info(f"  Total videos processed: {total_videos}")
     logger.info(f"  Successfully downloaded: {successful_downloads}")
-    logger.info(f"  Demo placeholders created: {failed_downloads}")
+    logger.info(f"  Failed downloads: {failed_downloads}")
+    logger.info(f"  Skipped (already exist): {skipped_downloads}")
     logger.info(f"  Output directory: {DATA_RAW_PATH}")
-    logger.info(f"{'='*60}\n")
+    logger.info(f"{'='*80}\n")
 
 
-def create_demo_video_placeholder(output_path: Path) -> None:
-    """
-    Create a placeholder file for demo videos when real downloads fail.
-    
-    Args:
-        output_path: Path where the placeholder should be created
-    """
-    try:
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Create a small placeholder file with metadata
-        demo_content = f"""
-DEMO VIDEO PLACEHOLDER
-======================
-This is a placeholder file created for local testing.
-
-Sign: {output_path.parent.name}
-Video ID: {output_path.stem}
-Created: 2026-04-24
-
-In production, this would contain actual WLASL sign language video.
-Download instructions are in data/README.md
-
-To use real WLASL videos:
-1. Clone: https://github.com/dxli94/WLASL
-2. Copy videos to data/raw/{output_path.parent.name}/
-3. Re-run the landmark extraction pipeline
-""".encode()
-        
-        with open(output_path, 'wb') as f:
-            f.write(demo_content)
-        
-        logger.info(f"  ✓ Created demo placeholder ({len(demo_content) / 1024:.1f} KB)")
-        
-    except Exception as e:
-        logger.error(f"  ✗ Failed to create placeholder: {e}")
-
-
-def save_metadata_locally(metadata: Dict, top_signs: List[Dict]) -> None:
+def save_metadata_locally(metadata: Dict) -> None:
     """
     Save WLASL metadata locally for reference.
     
     Args:
         metadata: Full WLASL metadata
-        top_signs: Top signs that were downloaded
     """
     metadata_path = DATA_RAW_PATH / "wlasl_metadata.json"
-    top_signs_path = DATA_RAW_PATH / "wlasl_top_10_signs.json"
     
-    # Save top 10 signs info
-    top_signs_info = []
-    for sign in top_signs:
-        top_signs_info.append({
-            "gloss": sign["gloss"],
-            "sign_id": sign["sign_id"],
-            "instance_count": len(sign.get("instances", [])),
-            "instances_sample": sign.get("instances", [])[:2]
-        })
+    with open(metadata_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
     
-    with open(top_signs_path, 'w') as f:
-        json.dump(top_signs_info, f, indent=2)
+    logger.info(f"Saved full WLASL metadata to {metadata_path}")
     
-    logger.info(f"Saved top signs metadata to {top_signs_path}")
+    # Also save summary stats
+    total_signs = len(metadata)
+    total_videos = sum(len(sign.get("instances", [])) for sign in metadata)
+    
+    stats = {
+        "total_signs": total_signs,
+        "total_videos": total_videos,
+        "average_videos_per_sign": total_videos / total_signs if total_signs > 0 else 0,
+        "download_date": "2026-04-26",
+        "dataset_version": "WLASL_v0.3"
+    }
+    
+    stats_path = DATA_RAW_PATH / "wlasl_stats.json"
+    with open(stats_path, 'w') as f:
+        json.dump(stats, f, indent=2)
+    
+    logger.info(f"Saved dataset statistics to {stats_path}")
 
 
 def main():
     """
-    Main function to orchestrate WLASL dataset download.
+    Main function to orchestrate complete WLASL dataset download.
     """
-    logger.info("="*70)
-    logger.info("WLASL Sample Dataset Setup")
-    logger.info("="*70)
-    logger.info(f"Output directory: {DATA_RAW_PATH}\n")
+    logger.info("="*80)
+    logger.info("WLASL COMPLETE Dataset Download")
+    logger.info("="*80)
+    logger.info(f"Output directory: {DATA_RAW_PATH}")
+    logger.info("Target: 21,000+ videos across 2,000+ signs")
+    logger.info("Estimated size: 50-100GB\n")
     
     try:
         # Create output directory
         DATA_RAW_PATH.mkdir(parents=True, exist_ok=True)
         
-        # Download metadata (with fallback to demo)
+        # Download metadata
         metadata = download_wlasl_metadata()
         
-        # Get top 10 signs
-        top_signs = get_top_signs(metadata, num_signs=10)
+        # Get all signs
+        all_signs = get_all_signs(metadata)
         
         # Save metadata locally
-        save_metadata_locally(metadata, top_signs)
+        save_metadata_locally(metadata)
         
-        # Download sample videos (with demo fallback)
-        download_sample_videos(top_signs, videos_per_sign=2)
+        # Download ALL videos
+        download_all_videos(all_signs)
         
-        logger.info("✅ WLASL sample dataset setup complete!\n")
+        logger.info("✅ WLASL complete dataset download complete!\n")
         logger.info("Next steps:")
-        logger.info("1. Inspect downloaded files:")
-        logger.info("   python notebooks/exploration/video_info_reader.py data/raw/\n")
-        logger.info("2. Extract MediaPipe landmarks (coming next)")
-        logger.info("3. Process data for training")
+        logger.info("1. Verify downloads:")
+        logger.info("   python notebooks/exploration/video_info_reader.py data/raw/")
+        logger.info("2. Extract MediaPipe landmarks:")
+        logger.info("   python -m backend.services.landmark_extraction")
+        logger.info("3. Process data for training:")
+        logger.info("   python -m backend.services.data_processor")
         
     except Exception as e:
-        logger.error(f"❌ Setup failed: {e}")
+        logger.error(f"❌ Download failed: {e}")
         logger.error("Please check the error above and try again.")
         raise
 

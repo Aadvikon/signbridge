@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import logging
+from tqdm import tqdm
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -56,27 +57,31 @@ class DataProcessor:
         # Group by sign (directory name)
         sign_data = {}
 
-        for json_file in json_files:
-            try:
-                # Extract sign name from path (parent directory name)
-                sign_name = json_file.parent.name
+        with tqdm(total=len(json_files), desc="Loading landmark files", unit="file") as pbar:
+            for json_file in json_files:
+                try:
+                    # Extract sign name from path (parent directory name)
+                    sign_name = json_file.parent.name
 
-                # Load JSON data
-                with open(json_file, 'r') as f:
-                    data = json.load(f)
+                    # Load JSON data
+                    with open(json_file, 'r') as f:
+                        data = json.load(f)
 
-                # Extract landmark sequence
-                frame_landmarks = data["frame_landmarks"]
-                sequence = self._extract_sequence_from_frames(frame_landmarks)
+                    # Extract landmark sequence
+                    frame_landmarks = data["frame_landmarks"]
+                    sequence = self._extract_sequence_from_frames(frame_landmarks)
 
-                if sign_name not in sign_data:
-                    sign_data[sign_name] = []
+                    if sign_name not in sign_data:
+                        sign_data[sign_name] = []
 
-                sign_data[sign_name].append(sequence)
-                logger.info(f"Loaded: {json_file.relative_to(landmarks_path)} ({len(sequence)} frames)")
+                    sign_data[sign_name].append(sequence)
 
-            except Exception as e:
-                logger.error(f"Failed to load {json_file}: {e}")
+                    pbar.set_description(f"Loaded: {json_file.relative_to(landmarks_path)}")
+
+                except Exception as e:
+                    logger.error(f"Failed to load {json_file}: {e}")
+
+                pbar.update(1)
 
         # Log summary
         total_sequences = sum(len(sequences) for sequences in sign_data.values())

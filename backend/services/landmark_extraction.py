@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
 import logging
+from tqdm import tqdm
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -382,6 +383,7 @@ class LandmarkExtractor:
     def process_all_videos(self, raw_data_path: str, landmarks_path: str) -> Dict:
         """
         Process all videos in the raw data directory and save landmarks as JSON.
+        Shows progress bar, skips already processed videos, logs failures.
 
         Args:
             raw_data_path: Path to data/raw/ directory
@@ -402,50 +404,84 @@ class LandmarkExtractor:
         video_files = list(raw_data_path.rglob("*.mp4"))
         if not video_files:
             logger.warning(f"No video files found in {raw_data_path}")
-            return {"total_videos": 0, "processed_videos": 0, "errors": 0}
+            return {"total_videos": 0, "processed_videos": 0, "skipped_videos": 0, "errors": 0}
 
         logger.info(f"Found {len(video_files)} video files to process")
 
         processed_count = 0
+        skipped_count = 0
         error_count = 0
         total_frames = 0
 
-        for video_file in video_files:
-            try:
-                # Create output path maintaining directory structure
-                relative_path = video_file.relative_to(raw_data_path)
-                output_json = landmarks_path / relative_path.with_suffix('.json')
-                output_json.parent.mkdir(parents=True, exist_ok=True)
+        # Failed videos log
+        failed_log_path = landmarks_path.parent / "failed_videos.txt"
+        failed_videos = []
 
-                logger.info(f"Processing: {relative_path}")
+        # Progress bar
+        with tqdm(total=len(video_files), desc="Processing videos", unit="video") as pbar:
+            for video_file in video_files:
+                try:
+                    # Create output path maintaining directory structure
+                    relative_path = video_file.relative_to(raw_data_path)
+                    output_json = landmarks_path / relative_path.with_suffix('.json')
 
-                # Process video
-                results = self.process_video(str(video_file))
+                    # Skip if already processed
+                    if output_json.exists():
+                        skipped_count += 1
+                        pbar.update(1)
+                        continue
 
-                # Save landmarks as JSON
-                self.save_landmarks_json(results, str(output_json))
+                    output_json.parent.mkdir(parents=True, exist_ok=True)
 
-                processed_count += 1
-                total_frames += results["total_frames"]
+                    # Update progress description
+                    pbar.set_description(f"Processing: {relative_path}")
 
-                logger.info(f"✅ Saved: {output_json} ({results['total_frames']} frames)")
+                    # Process video
+                    results = self.process_video(str(video_file))
 
-            except Exception as e:
-                logger.error(f"❌ Failed to process {video_file}: {e}")
-                error_count += 1
+                    # Save landmarks as JSON
+                    self.save_landmarks_json(results, str(output_json))
 
-        logger.info(f"\n{'='*60}")
-        logger.info("BATCH PROCESSING COMPLETE")
-        logger.info(f"{'='*60}")
-        logger.info(f"Total videos found: {len(video_files)}")
+                    processed_count += 1
+                    total_frames += results["total_frames"]
+
+                    pbar.set_description(f"Processed: {relative_path} ({results['total_frames']} frames)")
+
+                except Exception as e:
+                    error_msg = f"Failed to process {video_file}: {e}"
+                    logger.error(f"❌ {error_msg}")
+                    failed_videos.append(str(video_file))
+                    error_count += 1
+
+                pbar.update(1)
+
+        # Save failed videos log
+        if failed_videos:
+            with open(failed_log_path, 'w') as f:
+                f.write("Failed video processing log\n")
+                f.write("="*50 + "\n")
+                f.write(f"Total failed: {len(failed_videos)}\n\n")
+                for video in failed_videos:
+                    f.write(f"{video}\n")
+            logger.info(f"Saved failed videos log to: {failed_log_path}")
+
+        logger.info(f"\n{'='*80}")
+        logger.info("BATCH LANDMARK EXTRACTION COMPLETE")
+        logger.info(f"{'='*80}")
+        logger.info(f"Total videos found:     {len(video_files)}")
         logger.info(f"Successfully processed: {processed_count}")
-        logger.info(f"Errors: {error_count}")
+        logger.info(f"Skipped (already done): {skipped_count}")
+        logger.info(f"Errors:                 {error_count}")
         logger.info(f"Total frames processed: {total_frames}")
-        logger.info(f"{'='*60}")
+        logger.info(f"Output directory:       {landmarks_path}")
+        if failed_videos:
+            logger.info(f"Failed videos log:      {failed_log_path}")
+        logger.info(f"{'='*80}")
 
         return {
             "total_videos": len(video_files),
             "processed_videos": processed_count,
+            "skipped_videos": skipped_count,
             "errors": error_count,
             "total_frames": total_frames
         }
@@ -469,15 +505,16 @@ def main():
     try:
         results = extractor.process_all_videos(str(data_raw_path), str(data_landmarks_path))
 
-        print("\n" + "="*60)
+        print("\n" + "="*80)
         print("BATCH LANDMARK EXTRACTION COMPLETE")
-        print("="*60)
+        print("="*80)
         print(f"Total videos:     {results['total_videos']}")
         print(f"Processed:        {results['processed_videos']}")
+        print(f"Skipped:          {results['skipped_videos']}")
         print(f"Errors:           {results['errors']}")
         print(f"Total frames:     {results['total_frames']}")
         print(f"Output directory: {data_landmarks_path}")
-        print("="*60)
+        print("="*80)
 
     finally:
         extractor.close()
