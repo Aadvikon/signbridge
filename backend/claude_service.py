@@ -12,7 +12,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
 
-MODEL_ID = "anthropic.claude-3-5-sonnet-20241022-v2:0"
+MODEL_ID = "anthropic.claude-3-5-haiku-20241022-v1:0"
 
 
 def get_bedrock_client():
